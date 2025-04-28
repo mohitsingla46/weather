@@ -1,248 +1,131 @@
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import express, { Request, Response } from "express";
+import axios from "axios";
 import { z } from "zod";
+import cors from "cors";
 
-const NWS_API_BASE = "https://api.weather.gov";
-const USER_AGENT = "weather-app/1.0";
+const app = express();
+app.use(cors());
+app.use(express.json());
 
-// Create server instance
-const server = new McpServer({
-    name: "weather",
-    version: "1.0.0",
-    capabilities: {
-        resources: {},
-        tools: {},
-    },
+// Existing schemas
+const WeatherResponseSchema = z.object({
+    name: z.string(),
+    main: z.object({
+        temp: z.number(),
+        humidity: z.number(),
+    }),
+    weather: z.array(
+        z.object({
+            description: z.string(),
+        })
+    ),
 });
 
-// Helper function for making NWS API requests
-async function makeNWSRequest<T>(url: string): Promise<T | null> {
-    const headers = {
-        "User-Agent": USER_AGENT,
-        Accept: "application/geo+json",
-    };
+const ForecastResponseSchema = z.object({
+    list: z.array(
+        z.object({
+            dt_txt: z.string(),
+            main: z.object({
+                temp: z.number(),
+            }),
+            weather: z.array(
+                z.object({
+                    description: z.string(),
+                })
+            ),
+        })
+    ),
+});
+
+// New endpoint: /fetch_generic_documentation
+app.get("/fetch_generic_documentation", async (_req: Request, res: Response) => {
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
 
     try {
-        const response = await fetch(url, { headers });
-        if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
-        }
-        return (await response.json()) as T;
+        // Option 1: Fetch README.md from GitHub
+        const readmeUrl = "https://raw.githubusercontent.com/mohitsingla46/weather/master/README.md";
+        const response = await axios.get(readmeUrl);
+        const readmeContent = response.data;
+
+        // Stream the README content
+        res.write(`data: ${JSON.stringify({ documentation: readmeContent })}\n\n`);
     } catch (error) {
-        console.error("Error making NWS request:", error);
-        return null;
+        console.error("Error fetching documentation:", error);
+        res.write(`data: ${JSON.stringify({ error: "Failed to fetch documentation" })}\n\n`);
     }
-}
 
-interface AlertFeature {
-    properties: {
-        event?: string;
-        areaDesc?: string;
-        severity?: string;
-        status?: string;
-        headline?: string;
-    };
-}
+    res.end();
+});
 
-// Format alert data
-function formatAlert(feature: AlertFeature): string {
-    const props = feature.properties;
-    return [
-        `Event: ${props.event || "Unknown"}`,
-        `Area: ${props.areaDesc || "Unknown"}`,
-        `Severity: ${props.severity || "Unknown"}`,
-        `Status: ${props.status || "Unknown"}`,
-        `Headline: ${props.headline || "No headline"}`,
-        "---",
-    ].join("\n");
-}
+// Existing endpoints
+app.get("/get-weather", async (req: Request, res: Response) => {
+    const city = req.query.city as string;
+    if (!city) {
+        res.status(400).send("City is required");
+        return;
+    }
 
-interface ForecastPeriod {
-    name?: string;
-    temperature?: number;
-    temperatureUnit?: string;
-    windSpeed?: string;
-    windDirection?: string;
-    shortForecast?: string;
-}
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
 
-interface AlertsResponse {
-    features: AlertFeature[];
-}
+    try {
+        const apiKey = process.env.OPENWEATHER_API_KEY;
+        const url = `http://api.openweathermap.org/data/2.5/weather?q=${city}&appid=${apiKey}&units=metric`;
+        const response = await axios.get(url);
+        const validatedData = WeatherResponseSchema.parse(response.data);
 
-interface PointsResponse {
-    properties: {
-        forecast?: string;
-    };
-}
-
-interface ForecastResponse {
-    properties: {
-        periods: ForecastPeriod[];
-    };
-}
-
-// Register weather tools
-server.tool(
-    "get-alerts",
-    "Get weather alerts for a state",
-    {
-        state: z.string().length(2).describe("Two-letter state code (e.g. CA, NY)"),
-    },
-    async ({ state }) => {
-        const stateCode = state.toUpperCase();
-        const alertsUrl = `${NWS_API_BASE}/alerts?area=${stateCode}`;
-        const alertsData = await makeNWSRequest<AlertsResponse>(alertsUrl);
-
-        if (!alertsData) {
-            return {
-                content: [
-                    {
-                        type: "text",
-                        text: "Failed to retrieve alerts data",
-                    },
-                ],
-            };
-        }
-
-        const features = alertsData.features || [];
-        if (features.length === 0) {
-            return {
-                content: [
-                    {
-                        type: "text",
-                        text: `No active alerts for ${stateCode}`,
-                    },
-                ],
-            };
-        }
-
-        const formattedAlerts = features.map(formatAlert);
-        const alertsText = `Active alerts for ${stateCode}:\n\n${formattedAlerts.join("\n")}`;
-
-        return {
-            content: [
-                {
-                    type: "text",
-                    text: alertsText,
-                },
-            ],
-        };
-    },
-);
-
-server.tool(
-    "get-forecast",
-    "Get weather forecast for a location",
-    {
-        city: z.string().describe("City name, e.g. 'New York', 'San Francisco'"),
-    },
-    async ({ city }) => {
-        // Get grid point data using OpenStreetMap geocoding
-        const geoUrl = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(city)}`;
-        const geoRes = await fetch(geoUrl, {
-            headers: {
-                "User-Agent": USER_AGENT,
-            },
-        });
-
-        const geoData = await geoRes.json();
-        if (!geoData || geoData.length === 0) {
-            return {
-                content: [
-                    {
-                        type: "text",
-                        text: `City not found: ${city}`,
-                    },
-                ],
-            };
-        }
-
-        const { lat, lon } = geoData[0]; // No need for .toFixed()
-
-        // Get forecast URL from NWS API
-        const pointsUrl = `${NWS_API_BASE}/points/${lat},${lon}`;
-        const pointsData = await makeNWSRequest<PointsResponse>(pointsUrl);
-
-        if (!pointsData) {
-            return {
-                content: [
-                    {
-                        type: "text",
-                        text: `Failed to retrieve grid point data for coordinates: ${lat}, ${lon}. This location may not be supported by the NWS API.`,
-                    },
-                ],
-            };
-        }
-
-        const forecastUrl = pointsData.properties?.forecast;
-        if (!forecastUrl) {
-            return {
-                content: [
-                    {
-                        type: "text",
-                        text: "Failed to get forecast URL from grid point data.",
-                    },
-                ],
-            };
-        }
-
-        // Fetch the forecast data
-        const forecastData = await makeNWSRequest<ForecastResponse>(forecastUrl);
-        if (!forecastData) {
-            return {
-                content: [
-                    {
-                        type: "text",
-                        text: "Failed to retrieve forecast data.",
-                    },
-                ],
-            };
-        }
-
-        const periods = forecastData.properties?.periods || [];
-        if (periods.length === 0) {
-            return {
-                content: [
-                    {
-                        type: "text",
-                        text: "No forecast periods available.",
-                    },
-                ],
-            };
-        }
-
-        // Format forecast periods for display
-        const formattedForecast = periods.map((period: ForecastPeriod) =>
-            [
-                `${period.name || "Unknown"}:`,
-                `Temperature: ${period.temperature || "Unknown"}°${period.temperatureUnit || "F"}`,
-                `Wind: ${period.windSpeed || "Unknown"} ${period.windDirection || ""}`,
-                `${period.shortForecast || "No forecast available"}`,
-                "---",
-            ].join("\n"),
+        res.write(
+            `data: ${JSON.stringify({
+                city: validatedData.name,
+                temperature: validatedData.main.temp,
+                humidity: validatedData.main.humidity,
+                description: validatedData.weather[0].description,
+            })}\n\n`
         );
+    } catch (error) {
+        console.error("Error fetching weather:", error);
+        res.write(`data: ${JSON.stringify({ error: "Failed to fetch weather data" })}\n\n`);
+    }
 
-        const forecastText = `Forecast for ${city}:\n\n${formattedForecast.join("\n")}`;
+    res.end();
+});
 
-        return {
-            content: [
-                {
-                    type: "text",
-                    text: forecastText,
-                },
-            ],
-        };
-    },
-);
+app.get("/get-forecast", async (req: Request, res: Response) => {
+    const city = req.query.city as string;
+    if (!city) {
+        res.status(400).send("City is required");
+        return;
+    }
 
-async function main() {
-    const transport = new StdioServerTransport();
-    await server.connect(transport);
-    console.error("Weather MCP Server running on stdio");
-}
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
 
-main().catch((error) => {
-    console.error("Fatal error in main():", error);
-    process.exit(1);
+    try {
+        const apiKey = process.env.OPENWEATHER_API_KEY;
+        const url = `http://api.openweathermap.org/data/2.5/forecast?q=${city}&appid=${apiKey}&units=metric`;
+        const response = await axios.get(url);
+        const validatedData = ForecastResponseSchema.parse(response.data);
+
+        const forecasts = validatedData.list.slice(0, 5).map((item) => ({
+            date: item.dt_txt,
+            temperature: item.main.temp,
+            description: item.weather[0].description,
+        }));
+
+        res.write(`data: ${JSON.stringify({ forecasts })}\n\n`);
+    } catch (error) {
+        console.error("Error fetching forecast:", error);
+        res.write(`data: ${JSON.stringify({ error: "Failed to fetch forecast data" })}\n\n`);
+    }
+
+    res.end();
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+    console.log(`Server is running on port ${PORT}`);
 });
