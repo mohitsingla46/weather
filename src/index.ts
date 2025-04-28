@@ -38,7 +38,7 @@ const ForecastResponseSchema = z.object({
 });
 
 // New endpoint: /fetch_generic_documentation
-app.get("/fetch_generic_documentation", async (_req: Request, res: Response) => {
+app.get("/fetch_weather_documentation", async (_req: Request, res: Response) => {
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
     res.setHeader("Connection", "keep-alive");
