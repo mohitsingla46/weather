@@ -82,18 +82,36 @@ server.tool("get-alerts", "Get weather alerts for a state", {
     };
 });
 server.tool("get-forecast", "Get weather forecast for a location", {
-    latitude: z.number().min(-90).max(90).describe("Latitude of the location"),
-    longitude: z.number().min(-180).max(180).describe("Longitude of the location"),
-}, async ({ latitude, longitude }) => {
-    // Get grid point data
-    const pointsUrl = `${NWS_API_BASE}/points/${latitude.toFixed(4)},${longitude.toFixed(4)}`;
+    city: z.string().describe("City name, e.g. 'New York', 'San Francisco'"),
+}, async ({ city }) => {
+    // Get grid point data using OpenStreetMap geocoding
+    const geoUrl = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(city)}`;
+    const geoRes = await fetch(geoUrl, {
+        headers: {
+            "User-Agent": USER_AGENT,
+        },
+    });
+    const geoData = await geoRes.json();
+    if (!geoData || geoData.length === 0) {
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: `City not found: ${city}`,
+                },
+            ],
+        };
+    }
+    const { lat, lon } = geoData[0]; // No need for .toFixed()
+    // Get forecast URL from NWS API
+    const pointsUrl = `${NWS_API_BASE}/points/${lat},${lon}`;
     const pointsData = await makeNWSRequest(pointsUrl);
     if (!pointsData) {
         return {
             content: [
                 {
                     type: "text",
-                    text: `Failed to retrieve grid point data for coordinates: ${latitude}, ${longitude}. This location may not be supported by the NWS API (only US locations are supported).`,
+                    text: `Failed to retrieve grid point data for coordinates: ${lat}, ${lon}. This location may not be supported by the NWS API.`,
                 },
             ],
         };
@@ -104,19 +122,19 @@ server.tool("get-forecast", "Get weather forecast for a location", {
             content: [
                 {
                     type: "text",
-                    text: "Failed to get forecast URL from grid point data",
+                    text: "Failed to get forecast URL from grid point data.",
                 },
             ],
         };
     }
-    // Get forecast data
+    // Fetch the forecast data
     const forecastData = await makeNWSRequest(forecastUrl);
     if (!forecastData) {
         return {
             content: [
                 {
                     type: "text",
-                    text: "Failed to retrieve forecast data",
+                    text: "Failed to retrieve forecast data.",
                 },
             ],
         };
@@ -127,12 +145,12 @@ server.tool("get-forecast", "Get weather forecast for a location", {
             content: [
                 {
                     type: "text",
-                    text: "No forecast periods available",
+                    text: "No forecast periods available.",
                 },
             ],
         };
     }
-    // Format forecast periods
+    // Format forecast periods for display
     const formattedForecast = periods.map((period) => [
         `${period.name || "Unknown"}:`,
         `Temperature: ${period.temperature || "Unknown"}°${period.temperatureUnit || "F"}`,
@@ -140,7 +158,7 @@ server.tool("get-forecast", "Get weather forecast for a location", {
         `${period.shortForecast || "No forecast available"}`,
         "---",
     ].join("\n"));
-    const forecastText = `Forecast for ${latitude}, ${longitude}:\n\n${formattedForecast.join("\n")}`;
+    const forecastText = `Forecast for ${city}:\n\n${formattedForecast.join("\n")}`;
     return {
         content: [
             {
