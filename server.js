@@ -9,7 +9,7 @@ const PORT = process.env.PORT || 3000;
 const WEATHER_API_KEY = process.env.WEATHER_API_KEY;
 const WEATHER_API_URL = 'https://api.openweathermap.org/data/2.5/weather';
 
-app.get('/weather', async (req, res) => {
+app.get('/fetch_weather_documentation', async (req, res) => {
     try {
         const { city } = req.query;
         if (!city) return res.status(400).send('City parameter required');
