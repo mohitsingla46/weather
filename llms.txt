@@ -6,7 +6,7 @@ This project provides an MCP-compatible server with a single endpoint to retriev
 
 ## Endpoints
 
-- [/fetch_weather_documentation](http://localhost:3000/fetch_weather_documentation): Fetches current weather data for a city. Requires a `city` query parameter (e.g., `?city=London`).
+- [/weather](http://localhost:3000/weather): Fetches current weather data for a city. Requires a `city` query parameter (e.g., `?city=London`).
 
 ## Setup
 
@@ -18,7 +18,7 @@ This project provides an MCP-compatible server with a single endpoint to retriev
    PORT=3000
    ```
 4. Start the server: `npm start`
-5. Access the endpoint: `curl http://localhost:3000/fetch_weather_documentation?city=London`
+5. Access the endpoint: `curl http://localhost:3000/weather?city=London`
 
 ## References
 
